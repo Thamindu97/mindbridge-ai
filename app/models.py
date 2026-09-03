@@ -1,19 +1,17 @@
 from datetime import datetime
 
 from sqlalchemy import CheckConstraint, ForeignKey, Text
-from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
+from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy.sql import func
 
-
-class Base(DeclarativeBase):
-    pass
+from app.database import Base
 
 
 class User(Base):
     __tablename__ = "users"
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    email: Mapped[str] = mapped_column(nullable=False)
+    email: Mapped[str] = mapped_column(nullable=False, unique=True)
     first_name: Mapped[str] = mapped_column(nullable=False)
     last_name: Mapped[str | None] = mapped_column(nullable=True)
     created_at: Mapped[datetime] = mapped_column(server_default=func.now())
@@ -60,3 +58,16 @@ class Classification(Base):
     created_at: Mapped[datetime] = mapped_column(server_default=func.now())
 
     message: Mapped["Message"] = relationship(back_populates="classifications")
+
+
+class RequestLog(Base):
+    __tablename__ = "request_logs"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    endpoint: Mapped[str] = mapped_column(nullable=False)
+    model: Mapped[str] = mapped_column(nullable=False)
+    latency_ms: Mapped[float] = mapped_column(nullable=False)
+    input_tokens: Mapped[int] = mapped_column(nullable=False)
+    output_tokens: Mapped[int] = mapped_column(nullable=False)
+    cost_usd: Mapped[float | None] = mapped_column(nullable=True)
+    created_at: Mapped[datetime] = mapped_column(server_default=func.now())

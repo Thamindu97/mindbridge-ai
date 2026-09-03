@@ -31,7 +31,7 @@ _client = Anthropic(
     }
 )
 
-def classify(text: str) -> Classification:
+def classify(text: str) -> tuple[Classification, dict]:
     response = _client.messages.create(
         model=_MODEL,
         max_tokens=1024,
@@ -43,6 +43,12 @@ def classify(text: str) -> Classification:
 
     for block in response.content:
         if block.type == "tool_use" and block.name == _TOOL_NAME:
-            return Classification.model_validate(block.input) # Pydantic validates here
+            result = Classification.model_validate(block.input) # Pydantic validates here
+            usage = {
+                "input_tokens": response.usage.input_tokens,
+                "output_tokens": response.usage.output_tokens,
+                "model": response.model,
+            }
+            return result, usage
 
     raise ValueError("Model response did not include a record_classification tool call")
