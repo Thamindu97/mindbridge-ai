@@ -12,7 +12,8 @@ from sqlalchemy.orm import Session
 from app.auth import create_access_token, get_current_user, hash_password, verify_password
 from app.database import Base, engine, get_db
 from app.llm import classify
-from app.models import RequestLog, User
+from app.models import Classification as ClassificationModel
+from app.models import Conversation, Message, RequestLog, User
 from app.pricing import cost_usd
 from app.schemas import Classification
 
@@ -53,6 +54,15 @@ class Token(BaseModel):
     token_type: str = "bearer"
 
 
+class MessageRequest(BaseModel):
+    content: str
+
+
+class MessageResponse(BaseModel):
+    message_id: int
+    classification: Classification
+
+
 @app.post("/auth/register", status_code=status.HTTP_201_CREATED)
 def register(request: RegisterRequest, db: Session = Depends(get_db)) -> UserOut:
     existing_user = db.query(User).filter(User.email == request.email).first()
@@ -90,6 +100,59 @@ def login(
 @app.get("/auth/me")
 def read_current_user(current_user: User = Depends(get_current_user)) -> UserOut:
     return current_user
+
+
+@app.post("/conversations", status_code=status.HTTP_201_CREATED)
+def create_conversation(
+    current_user: User = Depends(get_current_user), db: Session = Depends(get_db)
+) -> dict[str, int]:
+    conversation = Conversation(user_id=current_user.id)
+    db.add(conversation)
+    db.commit()
+    db.refresh(conversation)
+
+    return {"id": conversation.id}
+
+
+@app.post("/conversations/{conversation_id}/messages")
+def create_message(
+    conversation_id: int,
+    request: MessageRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> MessageResponse:
+    conversation = db.get(Conversation, conversation_id)
+    if conversation is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Conversation not found")
+
+    if conversation.user_id != current_user.id:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not authorized for this conversation")
+
+    message = Message(conversation_id=conversation.id, role="user", content=request.content)
+    db.add(message)
+    db.commit()
+    db.refresh(message)
+
+    try:
+        result, usage = classify(request.content)
+    except Exception:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Classification service temporarily unavailable",
+        )
+
+    db.add(
+        ClassificationModel(
+            message_id=message.id,
+            distortion_type=result.distortion.value,
+            confidence=result.confidence,
+            evidence=result.evidence,
+            model_used=usage["model"],
+        )
+    )
+    db.commit()
+
+    return MessageResponse(message_id=message.id, classification=result)
 
 
 @app.get("/health")
