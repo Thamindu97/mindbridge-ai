@@ -3,14 +3,16 @@ import logging
 import time
 from contextlib import asynccontextmanager
 
-from fastapi import Depends, FastAPI
-from pydantic import BaseModel
+from fastapi import Depends, FastAPI, HTTPException, status
+from fastapi.security import OAuth2PasswordRequestForm
+from pydantic import BaseModel, EmailStr
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
+from app.auth import create_access_token, get_current_user, hash_password, verify_password
 from app.database import Base, engine, get_db
 from app.llm import classify
-from app.models import RequestLog
+from app.models import RequestLog, User
 from app.pricing import cost_usd
 from app.schemas import Classification
 
@@ -28,6 +30,66 @@ app = FastAPI(title="MindBridge AI", lifespan=lifespan)
 
 class ClassifyRequest(BaseModel):
     text: str
+
+
+class RegisterRequest(BaseModel):
+    email: EmailStr
+    password: str
+    first_name: str
+    last_name: str | None = None
+
+
+class UserOut(BaseModel):
+    id: int
+    email: str
+    first_name: str
+    last_name: str | None
+
+    model_config = {"from_attributes": True}
+
+
+class Token(BaseModel):
+    access_token: str
+    token_type: str = "bearer"
+
+
+@app.post("/auth/register", status_code=status.HTTP_201_CREATED)
+def register(request: RegisterRequest, db: Session = Depends(get_db)) -> UserOut:
+    existing_user = db.query(User).filter(User.email == request.email).first()
+    if existing_user is not None:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Email already registered")
+
+    user = User(
+        email=request.email,
+        hashed_password=hash_password(request.password),
+        first_name=request.first_name,
+        last_name=request.last_name,
+    )
+    db.add(user)
+    db.commit()
+    db.refresh(user)
+
+    return user
+
+
+@app.post("/auth/token")
+def login(
+    form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get_db)
+) -> Token:
+    user = db.query(User).filter(User.email == form_data.username).first()
+    if user is None or not verify_password(form_data.password, user.hashed_password):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Incorrect email or password",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+    return Token(access_token=create_access_token(user.id))
+
+
+@app.get("/auth/me")
+def read_current_user(current_user: User = Depends(get_current_user)) -> UserOut:
+    return current_user
 
 
 @app.get("/health")
