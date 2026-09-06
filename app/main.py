@@ -5,6 +5,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import Depends, FastAPI
 from pydantic import BaseModel
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.database import Base, engine, get_db
@@ -68,3 +69,18 @@ def classify_text(request: ClassifyRequest, db: Session = Depends(get_db)) -> Cl
     )
 
     return result
+
+
+@app.get("/stats")
+def stats(db: Session = Depends(get_db)) -> dict:
+    count, avg_latency_ms, total_cost_usd = db.query(
+        func.count(RequestLog.id),
+        func.avg(RequestLog.latency_ms),
+        func.sum(RequestLog.cost_usd),
+    ).one()
+
+    return {
+        "count": count,
+        "avg_latency_ms": avg_latency_ms,
+        "total_cost_usd": total_cost_usd,
+    }
